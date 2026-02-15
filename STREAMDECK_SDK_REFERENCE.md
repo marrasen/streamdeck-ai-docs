@@ -209,15 +209,15 @@ ev.action.setImage(`data:image/svg+xml,${encodeURIComponent(svg)}`);
 ev.action.setState(0);  // or 1 for second state
 
 // Feedback
-ev.action.showOk();     // Green checkmark
-ev.action.showAlert();  // Yellow warning
+ev.action.showOk();     // Green checkmark (keys only, not dials)
+ev.action.showAlert();  // Yellow warning (keys and dials)
 
 // Settings
 const settings = await ev.action.getSettings<MySettings>();
 await ev.action.setSettings({ count: 5 });
 
-// Send to PI
-ev.action.sendToPropertyInspector({ type: "update", data: {} });
+// Send to PI (via streamDeck.ui, NOT on action instances)
+streamDeck.ui.sendToPropertyInspector({ type: "update", data: {} });
 ```
 
 ### Dial Commands
@@ -256,6 +256,26 @@ this.actions.forEach((action) => {
 });
 ```
 
+### Property Inspector Communication (`streamDeck.ui`)
+
+**Important:** `sendToPropertyInspector` lives on `streamDeck.ui`, NOT on action instances. It sends to the currently visible Property Inspector.
+
+```typescript
+import streamDeck from "@elgato/streamdeck";
+
+// Send data to the currently visible PI
+await streamDeck.ui.sendToPropertyInspector({ type: "update", data: {} });
+
+// Get the action whose PI is currently visible (if any)
+const currentAction = streamDeck.ui.action; // DialAction | KeyAction | undefined
+
+// Listen for PI lifecycle events
+streamDeck.ui.onDidAppear((ev) => { /* PI opened */ });
+streamDeck.ui.onDidDisappear((ev) => { /* PI closed */ });
+```
+
+**Note:** `streamDeck.ui.sendToPropertyInspector()` only sends if a PI is currently visible. It automatically routes to the correct action's PI based on internal context.
+
 ---
 
 ## Settings
@@ -281,7 +301,7 @@ class Counter extends SingletonAction<Settings> {
 
     override onDidReceiveSettings(ev: DidReceiveSettingsEvent<Settings>): void {
         // React to PI changes
-        console.log(ev.payload.settings);
+        streamDeck.logger.info(JSON.stringify(ev.payload.settings));
     }
 }
 ```
@@ -297,7 +317,7 @@ const settings = await streamDeck.settings.getGlobalSettings<GlobalSettings>();
 
 // Listen for changes
 streamDeck.settings.onDidReceiveGlobalSettings((ev) => {
-    console.log(ev.settings);
+    streamDeck.logger.info(JSON.stringify(ev.settings));
 });
 ```
 
@@ -612,11 +632,11 @@ When the component initializes, it sends `sendToPlugin`:
 }
 ```
 
-**In Plugin - respond with `sendToPropertyInspector`:**
+**In Plugin - respond with `streamDeck.ui.sendToPropertyInspector`:**
 ```typescript
 override onSendToPlugin(ev: SendToPluginEvent): void {
     if (ev.payload.event === "getDevices") {
-        ev.action.sendToPropertyInspector({
+        streamDeck.ui.sendToPropertyInspector({
             event: "getDevices",
             items: [
                 {
@@ -711,8 +731,8 @@ const settings = await streamDeckClient.getSettings();
 class MyAction extends SingletonAction {
     override onSendToPlugin(ev: SendToPluginEvent): void {
         if (ev.payload.type === "refresh") {
-            // Handle message
-            ev.action.sendToPropertyInspector({ type: "data", items: [] });
+            // Handle message — use streamDeck.ui, NOT ev.action
+            streamDeck.ui.sendToPropertyInspector({ type: "data", items: [] });
         }
     }
 }
@@ -726,11 +746,18 @@ class MyAction extends SingletonAction {
 
 ```typescript
 streamDeck.devices.onDeviceDidConnect((ev) => {
-    console.log(`Connected: ${ev.device.id}, type: ${ev.device.type}`);
+    const { id, isConnected, name, size, type } = ev.device;
+    streamDeck.logger.info(`Connected: ${name} (${id}), type: ${type}`);
 });
 
 streamDeck.devices.onDeviceDidDisconnect((ev) => {
-    console.log(`Disconnected: ${ev.device.id}`);
+    streamDeck.logger.info(`Disconnected: ${ev.device.id}`);
+});
+
+// Available from Stream Deck 7.0
+streamDeck.devices.onDeviceDidChange((ev) => {
+    const { id, isConnected, name, size, type } = ev.device;
+    streamDeck.logger.info(`Device changed: ${name}`);
 });
 ```
 
@@ -749,11 +776,11 @@ In manifest.json:
 In plugin:
 ```typescript
 streamDeck.system.onApplicationDidLaunch((ev) => {
-    console.log(`App launched: ${ev.application}`);
+    streamDeck.logger.info(`App launched: ${ev.application}`);
 });
 
 streamDeck.system.onApplicationDidTerminate((ev) => {
-    console.log(`App terminated: ${ev.application}`);
+    streamDeck.logger.info(`App terminated: ${ev.application}`);
 });
 ```
 
@@ -763,17 +790,18 @@ URL format: `streamdeck://plugins/message/<PLUGIN_UUID>/<path>?<query>`
 
 ```typescript
 streamDeck.system.onDidReceiveDeepLink((ev) => {
-    console.log(ev.url.pathname);  // "/callback"
-    console.log(ev.url.searchParams.get("code"));  // OAuth code
+    const { path, fragment } = ev.url;
+    streamDeck.logger.info(`Path = ${path}`);
+    streamDeck.logger.info(`Fragment = ${fragment}`);
 });
 ```
 
-OAuth redirect proxy: `https://streamdeck.elgato.com/oauth/redirect/<PLUGIN_UUID>`
+OAuth redirect proxy: `https://oauth2-redirect.elgato.com/streamdeck/plugins/message/<PLUGIN_UUID>`
 
 ### System Wake
 
 ```typescript
-streamDeck.system.onSystemDidWakeUp(() => {
+streamDeck.system.onSystemDidWakeUp((ev) => {
     // Restore WebSocket connections, re-sync state
 });
 ```
@@ -803,7 +831,7 @@ streamDeck.system.openUrl("https://example.com");
 }
 ```
 
-Device types: `0`=SD, `1`=Mini, `2`=XL, `5`=Pedal, `7`=SD+, `9`=Neo
+Device types: `0`=SD, `1`=Mini, `2`=XL, `3`=Mobile, `4`=Corsair GKeys, `5`=Pedal, `6`=Corsair Voyager, `7`=SD+, `8`=SCUF Controller, `9`=Neo, `10`=Studio, `11`=Virtual
 
 ### Switch to Profile
 
@@ -816,23 +844,24 @@ streamDeck.profiles.switchToProfile(ev.action.device.id, "My Profile");
 ## Logging
 
 ```typescript
-import streamDeck, { LogLevel } from "@elgato/streamdeck";
+import streamDeck from "@elgato/streamdeck";
 
-// Basic logging
-streamDeck.logger.info("Info message");
-streamDeck.logger.warn("Warning");
+// Log levels (most to least severe): error, warn, info, debug, trace
 streamDeck.logger.error("Error occurred");
+streamDeck.logger.warn("Warning");
+streamDeck.logger.info("Info message");
 streamDeck.logger.debug("Debug info");
+streamDeck.logger.trace("Detailed execution flow");
 
 // Set log level
-streamDeck.logger.setLogLevel(LogLevel.WARN);
+streamDeck.logger.setLevel("warn");
 
 // Scoped logger
 const log = streamDeck.logger.createScope("MyAction");
 log.info("Scoped message");  // [MyAction] Scoped message
 ```
 
-Logs saved to: `*.sdPlugin/logs/<plugin-uuid>.log`
+Logs saved to: `*.sdPlugin/logs/<plugin-uuid>.0.log` (rotation index 0-9)
 
 ---
 
