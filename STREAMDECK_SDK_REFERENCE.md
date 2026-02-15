@@ -144,7 +144,164 @@ streamdeck pack  # Create .streamDeckPlugin file
 }
 ```
 
-Built-in layouts: `$X1`, `$A0`, `$A1`, `$B1`, `$B2`, `$C1`
+### Touch Strip Layouts (Stream Deck +)
+
+Each dial action renders one quarter of the touch strip at **200 x 100 px**. Layouts define what content is shown. Use built-in layouts or create custom JSON files.
+
+#### Built-in Layouts
+
+| ID | Name | Items |
+|----|------|-------|
+| `$X1` | Icon | title + icon |
+| `$A0` | Canvas | full-canvas pixmap + title + canvas pixmap |
+| `$A1` | Value | title + icon + value text |
+| `$B1` | Indicator | title + icon + value + bar indicator |
+| `$B2` | Gradient Indicator | title + icon + value + gbar indicator |
+| `$C1` | Double Indicator | title + icon1 + icon2 + 2 bar indicators |
+
+#### Custom Layout JSON
+
+Place `.json` files in the `*.sdPlugin/` folder. Reference via manifest or `setFeedbackLayout`.
+
+```json
+{
+    "$schema": "https://schemas.elgato.com/streamdeck/plugins/layout.json",
+    "id": "my-custom-layout",
+    "items": [
+        {
+            "key": "title",
+            "type": "text",
+            "rect": [16, 10, 136, 24],
+            "font": { "size": 16, "weight": 600 },
+            "alignment": "left"
+        },
+        {
+            "key": "icon",
+            "type": "pixmap",
+            "rect": [16, 40, 48, 48]
+        },
+        {
+            "key": "value",
+            "type": "text",
+            "rect": [76, 40, 108, 32],
+            "font": { "size": 24, "weight": 600 },
+            "alignment": "right"
+        },
+        {
+            "key": "indicator",
+            "type": "bar",
+            "rect": [76, 74, 108, 12],
+            "value": 0,
+            "subtype": 4,
+            "border_w": 0
+        }
+    ]
+}
+```
+
+**Manifest reference:**
+```json
+{ "Encoder": { "layout": "layouts/my-custom-layout.json" } }
+```
+
+**Programmatic switch:**
+```typescript
+if (ev.action.isDial()) {
+    ev.action.setFeedbackLayout("layouts/my-custom-layout.json");
+}
+```
+
+#### The `rect` Coordinate System
+
+`rect` is `[x, y, width, height]` in pixels on a **200 x 100** canvas. Items outside the canvas bounds will not render.
+
+#### Updating Layout Items via `setFeedback`
+
+Target items by their `key`:
+
+```typescript
+// Set value directly
+ev.action.setFeedback({ title: "Volume", value: "75%" });
+
+// Set specific properties
+ev.action.setFeedback({
+    indicator: { value: 75, bar_fill_c: "#00ff00" }
+});
+```
+
+#### Reserved Keys
+
+- **`title`** - User can override via PI. `setTitle()` also updates this item. User's font settings take precedence.
+- **`icon`** - User can override via PI.
+
+#### Layout Item Types
+
+**`text`** - Rendered text
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `key` | `string` | -- | Unique identifier (used in `setFeedback`) |
+| `rect` | `[x, y, w, h]` | -- | Position/size on 200x100 canvas |
+| `value` | `string` | -- | Text content |
+| `enabled` | `boolean` | `true` | Visibility |
+| `opacity` | `0`-`1` | `1` | Opacity (0.1 increments) |
+| `alignment` | `"center"` `"left"` `"right"` | `"center"` | Text alignment |
+| `color` | `string` | `"white"` | Font color (named or hex) |
+| `font.size` | `number` | -- | Font size in px |
+| `font.weight` | `number` | -- | Font weight (100-1000) |
+| `text-overflow` | `"clip"` `"ellipsis"` `"fade"` | `"clip"` | Overflow behavior |
+| `background` | `string` | -- | Color, hex, or gradient |
+| `zOrder` | `number` | `0` | Stacking order (0-700) |
+
+**`pixmap`** - Image (file path, base64, or SVG)
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `key` | `string` | -- | Unique identifier |
+| `rect` | `[x, y, w, h]` | -- | Position/size |
+| `value` | `string` | -- | File path, `data:image/...;base64,...`, or SVG string |
+| `enabled` | `boolean` | `true` | Visibility |
+| `opacity` | `0`-`1` | `1` | Opacity |
+| `background` | `string` | -- | Background color/gradient |
+| `zOrder` | `number` | `0` | Stacking order |
+
+**`bar`** - Progress/fill bar
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `key` | `string` | -- | Unique identifier |
+| `rect` | `[x, y, w, h]` | -- | Position/size |
+| `value` | `number` | -- | Fill amount (within `range`) |
+| `range` | `{ min, max }` | `{ min: 0, max: 100 }` | Value range |
+| `subtype` | `0-4` | `4` | 0=Rectangle, 1=DoubleRect, 2=Trapezoid, 3=DoubleTrapezoid, 4=Groove |
+| `bar_bg_c` | `string` | `"darkGray"` | Bar background (color/gradient) |
+| `bar_fill_c` | `string` | `"white"` | Fill color (color/gradient) |
+| `bar_border_c` | `string` | `"white"` | Border color |
+| `border_w` | `number` | `2` | Border width |
+| `enabled` | `boolean` | `true` | Visibility |
+| `opacity` | `0`-`1` | `1` | Opacity |
+| `background` | `string` | -- | Background color/gradient |
+| `zOrder` | `number` | `0` | Stacking order |
+
+**`gbar`** - Gradient bar with triangle indicator
+
+Same properties as `bar`, plus:
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `bar_h` | `number` | `10` | Height of the triangle indicator |
+
+#### Color/Gradient Format
+
+- Named: `"white"`, `"darkGray"`, `"pink"`
+- Hex: `"#204cfe"`
+- Gradient (for `background`, `bar_bg_c`, `bar_fill_c`): `"0:#ff0000,0.5:yellow,1:#00ff00"`
+
+#### Validate Layouts
+
+```bash
+streamdeck validate
+```
 
 ---
 
